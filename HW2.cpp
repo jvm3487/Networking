@@ -6,7 +6,10 @@
 #include <sstream>
 #include <string>
 #include <climits>
+#include <set>
 #include <string.h>
+
+
 
 struct _otherData
 {
@@ -20,6 +23,8 @@ struct _otherData
   _otherData(): bIGP(false), MED(INT_MAX), announceType(false), timeSec(0) {}
 };
 typedef struct _otherData otherData;
+
+
 
 std::string checkSmallerIPValue(const std::string& newValue, const std::string& oldValue)
 {
@@ -53,6 +58,8 @@ std::string checkSmallerIPValue(const std::string& newValue, const std::string& 
     }
   return oldValue;
 }
+
+
 
 void parseInput(const std::string& line, std::vector<std::string>& changeIP, otherData& oneBlockData)
 {
@@ -135,6 +142,8 @@ void parseInput(const std::string& line, std::vector<std::string>& changeIP, oth
   
 }
 
+
+
 void updateMapWithNewInfo(std::map<std::string, otherData>& mapIPAddress, const std::string& changeIPStr, const otherData& oneBlockData)
 {
   std::map<std::string, otherData>::iterator it;
@@ -181,6 +190,102 @@ void updateMapWithNewInfo(std::map<std::string, otherData>& mapIPAddress, const 
 	mapIPAddress.erase(it);
     }
 }
+
+
+
+void determineMaxTimeBase(const std::vector<std::string>& changeIP, const std::vector<unsigned>& checkAS, std::map<std::string, otherData>& mapIPAddress, unsigned& currentTimeBase, unsigned* numberOfWithdrawals, unsigned& maxTimeInstance, unsigned& maxLastMinute, const otherData& oneBlockData, std::vector<std::string>* ip60Sec, std::vector<std::string>* maxIP60Sec)
+{
+  for (const auto& changeIPStr: changeIP)
+    {
+      // find the address in the map
+      std::map<std::string, otherData>::iterator it;
+      it = mapIPAddress.find(changeIPStr);
+      
+      if (it == mapIPAddress.end())
+	return;
+      
+      bool continueFn = true;
+
+      for (const auto& checkASNode : checkAS)
+	if (checkASNode == it->second.asPath[it->second.asPath.size() - 1])
+	  continueFn = false;
+      
+      if (continueFn)
+	return;
+      
+      if (currentTimeBase == 0)
+	currentTimeBase = oneBlockData.timeSec;
+      
+      if (currentTimeBase != oneBlockData.timeSec)
+	{
+	  unsigned totalWithdrawalsLastMinute = 0;
+	  for (unsigned i = 0; i < 60; i++)
+	    {
+	      totalWithdrawalsLastMinute += numberOfWithdrawals[i];
+	    }
+	  
+	  if (totalWithdrawalsLastMinute > maxLastMinute)
+	    {
+	      maxTimeInstance = currentTimeBase;
+	      maxLastMinute = totalWithdrawalsLastMinute;
+	      for (unsigned i =0 ; i< 60; i++)
+		maxIP60Sec[i] = ip60Sec[i];
+	    }
+	
+	  unsigned timeChange = oneBlockData.timeSec - currentTimeBase;
+	  if (timeChange < 60)
+	    {
+	      // move everything back to reflect the new current time base
+	      for (unsigned i = 59; i >= timeChange ; i--)
+		{
+		  numberOfWithdrawals[i] = numberOfWithdrawals[i - timeChange];
+		  ip60Sec[i] = ip60Sec[i - timeChange];
+		}
+	    }
+	  else
+	    {
+	      timeChange = 60;
+	    }
+	  
+	  // put zeros in the other places
+	  for (unsigned i = 0; i < timeChange; i++)
+	    {
+	      numberOfWithdrawals[i] = 0;
+	      ip60Sec[i].clear();
+	    }
+	    
+	  currentTimeBase = oneBlockData.timeSec;
+	}
+
+      numberOfWithdrawals[0] += changeIP.size();
+      for (const auto& changeIPNode : changeIP)
+	ip60Sec[0].push_back(changeIPNode);
+
+    }
+}
+
+
+
+void printOutTime(int timeSec)
+{
+  unsigned hours = 0;
+  while (timeSec - 3600 > -1)
+    {
+      hours++;
+      timeSec -= 3600;
+    }
+  unsigned minutes = 0;
+  while (timeSec - 60 > -1)
+    {
+      minutes++;
+      timeSec -= 60;
+    }
+  unsigned seconds = timeSec;
+  std::cout << hours << ":" << minutes << ":" << seconds;
+
+}
+
+
 
 int main (int argc, char* argv[])
 {
@@ -229,7 +334,8 @@ int main (int argc, char* argv[])
   std::map<std::string, otherData > mapIPAddress;
 
   // For 2a and 2b withdrawal counting
-  //std::vector<std::string> ip60Sec[60];
+  std::vector<std::string> ip60Sec[60];
+  std::vector<std::string> maxIP60Sec[60];
   unsigned numberOfWithdrawals[60];
   for (unsigned i = 0; i < 60; i++)
     numberOfWithdrawals[i] = 0;
@@ -260,76 +366,22 @@ int main (int argc, char* argv[])
        
     if (mode.compare("2b") == 0 && !oneBlockData.announceType)
       {
-	for (const auto& changeIPStr: changeIP){
-	// find the address in the map
-	std::map<std::string, otherData>::iterator it;
-	it = mapIPAddress.find(changeIPStr);
+	std::vector<unsigned> checkAS;
+	checkAS.push_back(29256);
+	checkAS.push_back(29386);
 
-	if (it == mapIPAddress.end())
-	  continue;
-
-	bool continueLoop = true;
-	std::cout << oneBlockData.asPath.size() << std::endl;
-	for (const auto& currentASpath : it->second.asPath)
-	  {
-	    std::cout << currentASpath << std::endl;
-	    if (currentASpath == 29256 || currentASpath == 29386)
-	      continueLoop = false;
-	  }
-
-	if (continueLoop)
-	  continue;
-
-	std::cout << "I am here" << std::endl;
-
-	if (currentTimeBase == 0)
-	  currentTimeBase = oneBlockData.timeSec;
-
-	if (currentTimeBase == oneBlockData.timeSec)
-	  {
-	    numberOfWithdrawals[0] += changeIP.size(); 
-	  }
-	else
-	  {
-	    unsigned totalWithdrawalsLastMinute = 0;
-	    for (unsigned i = 0; i < 60; i++)
-	      totalWithdrawalsLastMinute += numberOfWithdrawals[i];
-
-	    std::cout << totalWithdrawalsLastMinute << std::endl;
-
-	    if (totalWithdrawalsLastMinute > maxLastMinute)
-	      {
-		maxTimeInstance = currentTimeBase;
-		maxLastMinute = totalWithdrawalsLastMinute;
-	      }
-
-	    unsigned timeChange = oneBlockData.timeSec - currentTimeBase;
-	    if (timeChange < 60)
-	      {
-		// move everything back to reflect the new current time base
-		for (unsigned i = timeChange; i < 60; i++)
-		  numberOfWithdrawals[i] = numberOfWithdrawals[i + timeChange];
-
-		// put zeros in the other places
-		for (unsigned i = 0; i < timeChange; i++)
-		  numberOfWithdrawals[i] = 0;
-	      }
-
-	    currentTimeBase = oneBlockData.timeSec;
-
-	    numberOfWithdrawals[0] += changeIP.size(); 
-	  }
+	determineMaxTimeBase(changeIP, checkAS, mapIPAddress, currentTimeBase, numberOfWithdrawals, maxTimeInstance, maxLastMinute, oneBlockData, ip60Sec, maxIP60Sec);
+	
       }
-      }
+
     // update the map with the changed IP address
     for (unsigned i = 0; i < changeIP.size(); i++)
       {
-	updateMapWithNewInfo(mapIPAddress, changeIP[i], oneBlockData);
+	if (mode.compare("2b") != 0 || oneBlockData.announceType) // don't remove withdraws for part 2 of the assignment
+	  updateMapWithNewInfo(mapIPAddress, changeIP[i], oneBlockData);
       }
    
     }
-
-  std::cout << maxTimeInstance << std::endl;
 
   if (mode.compare("1") == 0)
     {
@@ -343,6 +395,31 @@ int main (int argc, char* argv[])
 	    }
 	  std::cout << std::endl;
 	} 
+    }
+
+  // print out the results for part 2
+  if (mode.compare("2a") == 0 || mode.compare("2b") == 0)
+    {
+      if (mode.compare("2b") == 0)
+	std::cout << "11/29/12 ";
+	
+      printOutTime(maxTimeInstance - 59);
+      std::cout << " - ";
+      
+      if (mode.compare("2b") == 0)
+	std::cout << "11/29/12 ";
+
+      printOutTime(maxTimeInstance);
+      std::cout << std::endl;
+
+      std::set<std::string> answerToPrint;
+      for (unsigned i = 0; i < 60; i++)
+	{
+	  for (const auto& maxIP60SecNode : maxIP60Sec[i])
+	    answerToPrint.insert(maxIP60SecNode);
+	}
+      for (const auto& answerToPrintValue : answerToPrint)
+	std::cout << answerToPrintValue << std::endl;
     }
 
   inputFile.close();
