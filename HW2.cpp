@@ -10,24 +10,88 @@
 
 struct _otherData
 {
+  std::string strFrom;
   std::string nextHop;
-  std::vector<std::string> asPath;
+  std::vector<unsigned> asPath;
   bool bIGP;
   int MED;
-  _otherData(): bIGP(false), MED(INT_MAX) {}
+  bool announceType;
+  unsigned timeSec;
+  _otherData(): bIGP(false), MED(INT_MAX), announceType(false), timeSec(0) {}
 };
 typedef struct _otherData otherData;
 
-void parseInput(const std::string& line, std::vector<std::string>& changeIP, otherData& oneBlockData, bool& announceType)
+std::string checkSmallerIPValue(const std::string& newValue, const std::string& oldValue)
 {
+  if (oldValue.empty())
+    return newValue;
+
+  for (unsigned newIndex = 0, oldIndex = 0; newIndex < newValue.size() || oldIndex < oldValue.size(); newIndex++ , oldIndex++)
+    {
+      std::stringstream newStream;
+      for ( ; newIndex < newValue.size() && newValue[newIndex] != '.' && newValue[newIndex] != ':' && newValue[newIndex] != '\0'; newIndex++)
+	newStream << newValue[newIndex];
+
+      std::stringstream oldStream;
+      for ( ; oldIndex < oldValue.size() && oldValue[oldIndex] != '.' && oldValue[oldIndex] != ':' && oldValue[oldIndex] != '\0'; oldIndex++)
+	oldStream << oldValue[oldIndex];
+
+      unsigned baseType = 0;
+      if (newValue.find(":")) //check if IPv6
+	baseType = 16;
+      else
+	baseType = 10;
+	
+      unsigned uNew = newStream.rdbuf()->in_avail() ? std::stoi(newStream.str(), nullptr, baseType) : 0;
+      unsigned uOld = oldStream.rdbuf()->in_avail() ? std::stoi(oldStream.str(), nullptr, baseType) : 0;
+
+      if (uNew < uOld)
+	return newValue;
+      if (uOld < uNew)
+	return oldValue;
+
+    }
+  return oldValue;
+}
+
+void parseInput(const std::string& line, std::vector<std::string>& changeIP, otherData& oneBlockData)
+{
+  // Gather the time in sec from the beginning of the day
+  if (line.find("TIME:") != std::string::npos)
+    {
+      for (unsigned strIndex = 15; strIndex < line.size(); strIndex++)
+	{
+	  std::stringstream timeStream;
+	  for ( ; line[strIndex] != ':' && line[strIndex] != '\0'; strIndex++)
+	    timeStream << line[strIndex];
+
+	  if (strIndex == 17) // hours
+	    oneBlockData.timeSec = std::stoi(timeStream.str()) * 3600;
+	  else if (strIndex == 20) // minutes
+	    oneBlockData.timeSec += std::stoi(timeStream.str()) * 60;
+	  else // seconds
+	    oneBlockData.timeSec += std::stoi(timeStream.str());
+	}
+    }
+
+  // Gather the FROM address to check in the case of withdraw
+  else if (line.find("FROM:") != std::string::npos)
+    {
+      std::stringstream fromIP;	  
+      for (unsigned strIndex = 6; line[strIndex] != ' ' && line[strIndex] != '\0'; strIndex++)
+	fromIP << line[strIndex];
+      oneBlockData.strFrom = fromIP.str();
+    }
 
   // Gather the Next Hop IP Address
-  if (line.find("FROM:") != std::string::npos)
+  else if (line.find("NEXT_HOP:") != std::string::npos)
     {
       std::stringstream destIP;	  
-      for (unsigned strIndex = 6; line[strIndex] != ' '; strIndex++)
+      for (unsigned strIndex = 10; line[strIndex] != ' ' && line[strIndex] != '\0'; strIndex++)
 	destIP << line[strIndex];
-      oneBlockData.nextHop = destIP.str();
+      std::string stringNewIP = destIP.str();
+      // Check if the new string is smaller than the old string
+      oneBlockData.nextHop = checkSmallerIPValue(stringNewIP, oneBlockData.nextHop);
     }
       
   // Gather the origin information
@@ -37,12 +101,13 @@ void parseInput(const std::string& line, std::vector<std::string>& changeIP, oth
   // Gather the ASPATH
   else if (line.find("ASPATH:") != std::string::npos)
     {
-      for (unsigned currentIndex = 8 ; currentIndex - 1 < line.size() ; currentIndex++)
+      for (unsigned currentIndex = 8 ; currentIndex < line.size() ; currentIndex++)
 	{
 	  std::stringstream oneASpath;
-	  for ( ; line[currentIndex] != ' ' && line[currentIndex] != '\n'; currentIndex++)
+	  for ( ; line[currentIndex] != ' ' && line[currentIndex] != '\0' && line[currentIndex] != '{' && line[currentIndex] != ',' && line[currentIndex] != '}'; currentIndex++)
 	    oneASpath << line[currentIndex];
-	  oneBlockData.asPath.push_back(oneASpath.str());
+	  if (oneASpath.rdbuf()->in_avail())
+	    oneBlockData.asPath.push_back(std::stoi(oneASpath.str()));
 	}
     } 
   
@@ -50,32 +115,32 @@ void parseInput(const std::string& line, std::vector<std::string>& changeIP, oth
   else if (line.find("MULTI_EXIT_DISC:") != std::string::npos)
     {
       std::stringstream medStream;
-      for (unsigned strIndex = 17; line[strIndex] != ' '; strIndex++)
+      for (unsigned strIndex = 17; line[strIndex] != ' ' && line[strIndex] != '\0'; strIndex++)
 	medStream << line[strIndex];
       oneBlockData.MED = std::stoi(medStream.str());
     }
 
   // Determine if announce
   else if (line.find("ANNOUNCE") !=std::string::npos)
-    announceType = true;
+    oneBlockData.announceType = true;
   
   // Determine announced ip addresses
-  else if (line[0] == ' ')
+  else if (line[0] == ' ' && line[2] != ' ')
     {
       std::stringstream ipAdd;
-      for (unsigned currentIndex = 2 ; currentIndex - 1 < line.size(); currentIndex++)
+      for (unsigned currentIndex = 2 ; currentIndex < line.size() && line[currentIndex] != '\0'; currentIndex++)
 	ipAdd << line[currentIndex];
       changeIP.push_back(ipAdd.str());
     }
   
 }
 
-void updateMapWithNewInfo(std::map<std::string, otherData>& mapIPAddress, const std::string& changeIPStr, const otherData& oneBlockData, const bool announceType)
+void updateMapWithNewInfo(std::map<std::string, otherData>& mapIPAddress, const std::string& changeIPStr, const otherData& oneBlockData)
 {
   std::map<std::string, otherData>::iterator it;
   it = mapIPAddress.find(changeIPStr);
   
-  if (announceType)
+  if (oneBlockData.announceType)
     {
       // check to see if the information should be updated or left as is
       if (it != mapIPAddress.end())
@@ -95,30 +160,8 @@ void updateMapWithNewInfo(std::map<std::string, otherData>& mapIPAddress, const 
 		    return;
 		  else if (it->second.MED == oneBlockData.MED) // same - go to final tiebreak
 		    {
-		      unsigned currentIndexMap = 0;
-		      unsigned currentIndexChallenger = 0;
-		      unsigned firstTotal = 0;
-		      unsigned secondTotal = 0;
-		      while ( currentIndexMap - 1 < it->second.nextHop.size())
-			{
-			  std::stringstream ipStream;
-			  std::stringstream ipStream2;
-			  for ( ; it->second.nextHop[currentIndexMap] != '.' && it->second.nextHop[currentIndexMap] != ':' && currentIndexMap - 1 < it->second.nextHop.size(); currentIndexMap++)
-			    ipStream << it->second.nextHop[currentIndexMap];
-			  firstTotal = 0;
-			  if (!ipStream.rdbuf()->in_avail())
-			    firstTotal = std::stoi(ipStream.str());
-			  for ( ; oneBlockData.nextHop[currentIndexChallenger] != '.' && oneBlockData.nextHop[currentIndexChallenger] != ':' && currentIndexChallenger - 1 < oneBlockData.nextHop.size(); currentIndexChallenger++)
-			    ipStream2 << it->second.nextHop[currentIndexMap];
-			  secondTotal = 0;
-			  if (!ipStream2.rdbuf()->in_avail())
-			    secondTotal = std::stoi(ipStream2.str());
-			  if (firstTotal != secondTotal)
-			    break;
-			  currentIndexChallenger++;
-			  currentIndexMap++;
-			}
-		      if (firstTotal <= secondTotal)
+		      std::string smallestIP = checkSmallerIPValue(oneBlockData.nextHop, it->second.nextHop);
+		      if (smallestIP.compare(it->second.nextHop) == 0)
 			return;
 		    }
 		  
@@ -133,7 +176,8 @@ void updateMapWithNewInfo(std::map<std::string, otherData>& mapIPAddress, const 
     }
   else
     {
-      if (it != mapIPAddress.end())
+      // compare withdraw with next hop ip to make sure it came from the same router that originally published it
+      if (it != mapIPAddress.end() && it->second.strFrom.compare(oneBlockData.strFrom) == 0)
 	mapIPAddress.erase(it);
     }
 }
@@ -181,16 +225,25 @@ int main (int argc, char* argv[])
     }
 
   // IP Address map to
-  // Next Hop IP Address, AS path, origin type IDP=true, and MED
+  // Next Hop IP Address, AS path, origin type IDP=true, MED, and announceType
   std::map<std::string, otherData > mapIPAddress;
+
+  // For 2a and 2b withdrawal counting
+  //std::vector<std::string> ip60Sec[60];
+  unsigned numberOfWithdrawals[60];
+  for (unsigned i = 0; i < 60; i++)
+    numberOfWithdrawals[i] = 0;
+  unsigned currentTimeBase = 0;
+  unsigned maxLastMinute = 0;
+  unsigned maxTimeInstance = 0;
 
   std::string line;
  
-  while (!inputFile.eof()){
+  while (!inputFile.eof())
+    {
   
     std::vector<std::string> changeIP;
     otherData oneBlockData;
-    bool announceType = false; //true if announce, false otherwise
 
     while (std::getline(inputFile, line))
       {
@@ -201,27 +254,96 @@ int main (int argc, char* argv[])
 	  }
 	else
 	  {
-	    parseInput(line, changeIP, oneBlockData, announceType);
+	    parseInput(line, changeIP, oneBlockData);
 	  }
       }
+       
+    if (mode.compare("2b") == 0 && !oneBlockData.announceType)
+      {
+	for (const auto& changeIPStr: changeIP){
+	// find the address in the map
+	std::map<std::string, otherData>::iterator it;
+	it = mapIPAddress.find(changeIPStr);
 
+	if (it == mapIPAddress.end())
+	  continue;
+
+	bool continueLoop = true;
+	std::cout << oneBlockData.asPath.size() << std::endl;
+	for (const auto& currentASpath : it->second.asPath)
+	  {
+	    std::cout << currentASpath << std::endl;
+	    if (currentASpath == 29256 || currentASpath == 29386)
+	      continueLoop = false;
+	  }
+
+	if (continueLoop)
+	  continue;
+
+	std::cout << "I am here" << std::endl;
+
+	if (currentTimeBase == 0)
+	  currentTimeBase = oneBlockData.timeSec;
+
+	if (currentTimeBase == oneBlockData.timeSec)
+	  {
+	    numberOfWithdrawals[0] += changeIP.size(); 
+	  }
+	else
+	  {
+	    unsigned totalWithdrawalsLastMinute = 0;
+	    for (unsigned i = 0; i < 60; i++)
+	      totalWithdrawalsLastMinute += numberOfWithdrawals[i];
+
+	    std::cout << totalWithdrawalsLastMinute << std::endl;
+
+	    if (totalWithdrawalsLastMinute > maxLastMinute)
+	      {
+		maxTimeInstance = currentTimeBase;
+		maxLastMinute = totalWithdrawalsLastMinute;
+	      }
+
+	    unsigned timeChange = oneBlockData.timeSec - currentTimeBase;
+	    if (timeChange < 60)
+	      {
+		// move everything back to reflect the new current time base
+		for (unsigned i = timeChange; i < 60; i++)
+		  numberOfWithdrawals[i] = numberOfWithdrawals[i + timeChange];
+
+		// put zeros in the other places
+		for (unsigned i = 0; i < timeChange; i++)
+		  numberOfWithdrawals[i] = 0;
+	      }
+
+	    currentTimeBase = oneBlockData.timeSec;
+
+	    numberOfWithdrawals[0] += changeIP.size(); 
+	  }
+      }
+      }
     // update the map with the changed IP address
     for (unsigned i = 0; i < changeIP.size(); i++)
       {
-	updateMapWithNewInfo(mapIPAddress, changeIP[i], oneBlockData, announceType);
+	updateMapWithNewInfo(mapIPAddress, changeIP[i], oneBlockData);
       }
-  }
+   
+    }
 
-  // print out the map in the correct format
-  for (const auto& mapValue : mapIPAddress)
+  std::cout << maxTimeInstance << std::endl;
+
+  if (mode.compare("1") == 0)
     {
-      std::cout << mapValue.first << " " << mapValue.second.nextHop;
-      for (const auto& asPathValue : mapValue.second.asPath)
+      // print out the map in the correct format
+      for (const auto& mapValue : mapIPAddress)
 	{
-	  std::cout << " " << asPathValue; 
-	}
-      std::cout << std::endl;
-    } 
+	  std::cout << mapValue.first << " " << mapValue.second.nextHop;
+	  for (const auto& asPathValue : mapValue.second.asPath)
+	    {
+	      std::cout << " " << asPathValue; 
+	    }
+	  std::cout << std::endl;
+	} 
+    }
 
   inputFile.close();
 
