@@ -343,6 +343,21 @@ int main (int argc, char* argv[])
   unsigned maxLastMinute = 0;
   unsigned maxTimeInstance = 0;
 
+  std::vector<unsigned> checkAS;
+  if (mode.compare("2a") == 0)
+    {
+      checkAS.push_back(5536);
+      checkAS.push_back(8452);
+      checkAS.push_back(24835);
+      checkAS.push_back(24863);
+      checkAS.push_back(36992);
+    }
+  else if (mode.compare("2b") == 0)
+    {
+      checkAS.push_back(29256);
+      checkAS.push_back(29386);
+    }
+
   std::string line;
  
   while (!inputFile.eof())
@@ -364,20 +379,15 @@ int main (int argc, char* argv[])
 	  }
       }
        
-    if (mode.compare("2b") == 0 && !oneBlockData.announceType)
+    if ((mode.compare("2a") == 0 || mode.compare("2b") == 0) && !oneBlockData.announceType)
       {
-	std::vector<unsigned> checkAS;
-	checkAS.push_back(29256);
-	checkAS.push_back(29386);
-
-	determineMaxTimeBase(changeIP, checkAS, mapIPAddress, currentTimeBase, numberOfWithdrawals, maxTimeInstance, maxLastMinute, oneBlockData, ip60Sec, maxIP60Sec);
-	
+	determineMaxTimeBase(changeIP, checkAS, mapIPAddress, currentTimeBase, numberOfWithdrawals, maxTimeInstance, maxLastMinute, oneBlockData, ip60Sec, maxIP60Sec);	
       }
 
     // update the map with the changed IP address
     for (unsigned i = 0; i < changeIP.size(); i++)
       {
-	if (mode.compare("2b") != 0 || oneBlockData.announceType) // don't remove withdraws for part 2 of the assignment
+	if (mode.compare("1") == 0 || oneBlockData.announceType) // don't remove withdraws for part 2 of the assignment
 	  updateMapWithNewInfo(mapIPAddress, changeIP[i], oneBlockData);
       }
    
@@ -402,12 +412,16 @@ int main (int argc, char* argv[])
     {
       if (mode.compare("2b") == 0)
 	std::cout << "11/29/12 ";
+      else
+	std::cout << "01/27/11 ";
 	
       printOutTime(maxTimeInstance - 59);
       std::cout << " - ";
       
       if (mode.compare("2b") == 0)
 	std::cout << "11/29/12 ";
+      else
+	std::cout << "01/27/11 ";
 
       printOutTime(maxTimeInstance);
       std::cout << std::endl;
