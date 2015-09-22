@@ -430,7 +430,7 @@ int main (int argc, char* argv[])
     {
       printOutTime(maxTimeInstance - 59, mode);
       std::cout << "\t";
-      printOutTime(maxTimeInstance, mode);
+      printOutTime(maxTimeInstance + 1, mode);
       std::cout << std::endl;
 
       std::set<std::string> answerToPrint;
