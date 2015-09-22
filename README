@@ -1,0 +1,13 @@
+Student: John McCrone
+
+The language I used for this assignment was C++ (standard C++11)
+
+When doing this problem, I first checked for good input and quit the program if the input was unexpected.  In all cases of good input, I started by parsing each entry of the input files into a struct and created a map of announced ip addresses versus this struct.  If the ip address was already in the table, I compared it first by AS path length, second by origin, third by MED, and finally by actual ip address to determine if the value remained or was replaced.
+
+In mode 1, in the case of a withdrawal, I checked if the withdrawal matched the original announcement source, and only then did I remove it from the map.  This prevented removing good routes from a source that withdrew a worse route than what was stored in the map.
+
+In mode 2, I did not withdrawal anything from the map in order to try and get an accurate count of when Egypt and Syria went off the net.  
+
+I detected the one minute intervals by examining every withdrawal address from the input file.  If the withdrawal address was in the current forwarding table and had a terminal AS that belonged to either Egypt or Syria, depending on the mode, I incremented the counter for the current time by one.  As the time changed, I developed a scrolling 60 second window of the last 60 seconds and added up all the entries in the array of all the withdrawal addresses in the last 60 seconds to determine when the maximum amount of withdrawal address for either Egypt or Syria occurred.  I used any 60 consecutive seconds as the calculated minute.
+
+Finally, in all cases, I printed out the information requested by the problem.  In mode 1, this was only the forwarding table contained in the map.  In mode 2, I converted the time for the rolling window to UNIX time, and then printed out the IP addresses withdrawn by either Syria or Egypt during the one minute time interval.  I suppressed common outputs by placing this in a set first.
