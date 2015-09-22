@@ -8,6 +8,7 @@
 #include <climits>
 #include <set>
 #include <string.h>
+#include <time.h>
 
 
 
@@ -16,9 +17,9 @@ struct _otherData
   std::string strFrom;
   std::string nextHop;
   std::vector<unsigned> asPath;
-  bool bIGP;
+  int bIGP; // 0 IGP, 1 EGP, 2 INCOMPLETE
   int MED;
-  bool announceType;
+  bool announceType; // true for announce
   unsigned timeSec;
   _otherData(): bIGP(false), MED(INT_MAX), announceType(false), timeSec(0) {}
 };
@@ -103,7 +104,7 @@ void parseInput(const std::string& line, std::vector<std::string>& changeIP, oth
       
   // Gather the origin information
   else if (line.find("ORIGIN:") != std::string::npos)
-    oneBlockData.bIGP = (line.find("IGP") != std::string::npos);
+    oneBlockData.bIGP = (line.find("IGP") != std::string::npos) ? 0 : (line.find("EGP") != std::string::npos) ? 1 : 2;
 
   // Gather the ASPATH
   else if (line.find("ASPATH:") != std::string::npos)
@@ -160,7 +161,7 @@ void updateMapWithNewInfo(std::map<std::string, otherData>& mapIPAddress, const 
 	  else if (it->second.asPath.size() == oneBlockData.asPath.size()) //same - go to next tiebreaker
 	    {
 	      // second check - better not IGP
-	      if (it->second.bIGP == false && oneBlockData.bIGP == true)
+	      if (it->second.bIGP < oneBlockData.bIGP)
 		return;
 	      else if (it->second.bIGP == oneBlockData.bIGP) // same - go to next tiebreaker
 		{
@@ -266,23 +267,40 @@ void determineMaxTimeBase(const std::vector<std::string>& changeIP, const std::v
 
 
 
-void printOutTime(int timeSec)
+void printOutTime(int timeSec, const std::string& mode)
 {
-  unsigned hours = 0;
+  struct tm unixTime;
+  unixTime.tm_isdst = 0; // not daylight savings time
+  if (mode.compare("2b") == 0)
+    {
+      // 11/29/12
+      unixTime.tm_year = 112;
+      unixTime.tm_mon = 10;
+      unixTime.tm_mday = 29;
+    }
+  else
+    {
+      // 01/27/11
+      unixTime.tm_year = 111;
+      unixTime.tm_mon = 0;
+      unixTime.tm_mday = 27;
+    }
+
+  unixTime.tm_hour = 0;
   while (timeSec - 3600 > -1)
     {
-      hours++;
+      unixTime.tm_hour++;
       timeSec -= 3600;
     }
-  unsigned minutes = 0;
+  unixTime.tm_min = 0;
   while (timeSec - 60 > -1)
     {
-      minutes++;
+      unixTime.tm_min++;
       timeSec -= 60;
     }
-  unsigned seconds = timeSec;
-  std::cout << hours << ":" << minutes << ":" << seconds;
-
+  unixTime.tm_sec = timeSec;
+  std::cout << (mktime(&unixTime) - timezone);
+ 
 }
 
 
@@ -378,7 +396,7 @@ int main (int argc, char* argv[])
 	    parseInput(line, changeIP, oneBlockData);
 	  }
       }
-       
+
     if ((mode.compare("2a") == 0 || mode.compare("2b") == 0) && !oneBlockData.announceType)
       {
 	determineMaxTimeBase(changeIP, checkAS, mapIPAddress, currentTimeBase, numberOfWithdrawals, maxTimeInstance, maxLastMinute, oneBlockData, ip60Sec, maxIP60Sec);	
@@ -410,20 +428,9 @@ int main (int argc, char* argv[])
   // print out the results for part 2
   if (mode.compare("2a") == 0 || mode.compare("2b") == 0)
     {
-      if (mode.compare("2b") == 0)
-	std::cout << "11/29/12 ";
-      else
-	std::cout << "01/27/11 ";
-	
-      printOutTime(maxTimeInstance - 59);
-      std::cout << " - ";
-      
-      if (mode.compare("2b") == 0)
-	std::cout << "11/29/12 ";
-      else
-	std::cout << "01/27/11 ";
-
-      printOutTime(maxTimeInstance);
+      printOutTime(maxTimeInstance - 59, mode);
+      std::cout << "\t";
+      printOutTime(maxTimeInstance, mode);
       std::cout << std::endl;
 
       std::set<std::string> answerToPrint;
@@ -432,8 +439,15 @@ int main (int argc, char* argv[])
 	  for (const auto& maxIP60SecNode : maxIP60Sec[i])
 	    answerToPrint.insert(maxIP60SecNode);
 	}
-      for (const auto& answerToPrintValue : answerToPrint)
-	std::cout << answerToPrintValue << std::endl;
+
+      for (std::set<std::string>::iterator it = answerToPrint.begin(); it != answerToPrint.end(); ++it)
+	{
+	  if (it == answerToPrint.begin())
+	    std::cout << *it;
+	  else
+	    std::cout << "\t" << *it;
+	}
+      std::cout << std::endl;
     }
 
   inputFile.close();
