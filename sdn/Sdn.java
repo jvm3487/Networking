@@ -6,7 +6,9 @@ import java.io.FileReader;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import net.floodlightcontroller.core.FloodlightContext;
 import net.floodlightcontroller.core.IFloodlightProviderService;
@@ -18,6 +20,11 @@ import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
+import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryListener;
+import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryService;
+import net.floodlightcontroller.linkdiscovery.ILinkDiscovery.LDUpdate;
+import net.floodlightcontroller.linkdiscovery.LinkInfo;
+import net.floodlightcontroller.routing.Link;
 
 import org.openflow.protocol.OFMessage;
 import org.openflow.protocol.OFPacketIn;
@@ -30,32 +37,55 @@ import org.openflow.util.U16;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class Sdn implements IFloodlightModule, IOFSwitchListener {
+public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscoveryListener {
     protected static Logger log = LoggerFactory.getLogger(Sdn.class);
 
     protected IFloodlightProviderService floodlightProvider;
-
+    protected ILinkDiscoveryService linkDiscoverer;
+    private SdnGraph graph;
+    
     public void setFloodlightProvider(IFloodlightProviderService floodlightProvider) {
         this.floodlightProvider = floodlightProvider;
     }
-
-    /**
-     * Fired when switch becomes known to the controller cluster. I.e.,
-     * the switch is connected at some controller in the cluster
-     * @param switchId the datapath Id of the new switch
-     */
-    @Override public void switchAdded(long switchId){
-    	System.out.println("===== I've been added! ======" + switchId);
+    
+    @Override public void linkDiscoveryUpdate(LDUpdate update) {
+    	System.out.println("=====Here now!=====");
     }
+
+    @Override public void linkDiscoveryUpdate(List<LDUpdate> updateList) {
+    	System.out.println("=====Here now!2=====");
+    	Map<Link, LinkInfo> linkMap = linkDiscoverer.getLinks();
+    	graph.setNumLinks(linkMap.size());
+    	int index = 0;
+    	for (Map.Entry<Link, LinkInfo> linkEntry : linkMap.entrySet()){
+    		graph.addLink(index, linkEntry.getKey());
+    		index++;
+    	}
+    	graph.print(1,5);
+    }
+    
+    @Override public void switchAdded(long switchId){}
 
     @Override public void switchRemoved(long switchId) {}
 
-    @Override public void switchActivated(long switchId) {}
+    @Override public void switchActivated(long switchId) {
+    	System.out.println("===== I've been added3! ======" + switchId);
+    	Map<Link, LinkInfo> linkMap = linkDiscoverer.getLinks();
+    	graph.setNumLinks(linkMap.size());
+    	int index = 0;
+    	for (Map.Entry<Link, LinkInfo> linkEntry : linkMap.entrySet()){
+    		graph.addLink(index, linkEntry.getKey());
+    		index++;
+    	}
+    	graph.print(1,5);
+    }
 
     @Override public void switchPortChanged(long switchId,
                                   ImmutablePort port,
-                                  IOFSwitch.PortChangeType type) {}
-    @Override public void switchChanged(long switchId) {};
+                                  IOFSwitch.PortChangeType type) {
+    	System.out.println("===== I've been added4! ======" + switchId);
+    }
+    @Override public void switchChanged(long switchId) {}
     
     /*@Override
     public String getName() {
@@ -134,18 +164,17 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener {
     @Override
     public void init(FloodlightModuleContext context)
             throws FloodlightModuleException {
-        floodlightProvider =
-                context.getServiceImpl(IFloodlightProviderService.class);
-        
+        floodlightProvider = context.getServiceImpl(IFloodlightProviderService.class);
+        linkDiscoverer = context.getServiceImpl(ILinkDiscoveryService.class);
+
         Map<String, String> configParams = context.getConfigParams(this);
         String NumSwitches = configParams.get("numSwitches");
         String TopologyInfo = configParams.get("topologyFile");
         
-        SdnGraph graph;
         try{
         	graph = new SdnGraph(Integer.parseInt(NumSwitches));
         	BufferedReader br = new BufferedReader(new FileReader(TopologyInfo));
-        	System.out.println(graph.buildGraph(br));
+        	graph.buildHostIP(br);
         }
         catch (NumberFormatException e){
         	System.err.println("Expected Integer for Number of Switches!");
@@ -160,6 +189,7 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener {
     @Override
     public void startUp(FloodlightModuleContext context) {
         floodlightProvider.addOFSwitchListener(this);
+        linkDiscoverer.addListener(this);
     }
 }
 
