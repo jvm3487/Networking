@@ -6,22 +6,15 @@ import java.util.ArrayList;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
+import org.openflow.util.HexString;
+
 import net.floodlightcontroller.routing.Link;
 
 public class SdnGraph {
 	private int numSwitches;
 	private String[][] hostIP; //contains the host IP with the switches and port number
 	private Link[] allNetworkLinks; // array of all links in the network
-	private class SrcPortPair{
-		public long src;
-		public long dst;
-		public short port;
-		SrcPortPair(long srcI, long dstI, short portI){
-			src = srcI;
-			dst = dstI;
-			port = portI;
-		}
-	}
+	public ArrayList<ArrayList<SrcPortPair>> shortPaths;
 	
 	public SdnGraph(int numS){
 		numSwitches = numS;
@@ -43,12 +36,29 @@ public class SdnGraph {
 		}
 	}
 
-	public void print(long src, long dest){
-		ArrayList<ArrayList<SrcPortPair>> shortPaths = calculateShortestPaths(src, dest);	
+	private long getClosestSwitchFromIP(String strInput){
+		for (int i = 0; i < hostIP.length; i++){
+			if (strInput.compareTo(hostIP[i][0]) == 0){
+				return HexString.toLong(hostIP[i][1]);
+			}
+		}
+		return -1; // should not get here
+	}
+	
+	public void calculatePaths(String src, String dst){
+		long srcSwitch = getClosestSwitchFromIP(src);
+		long dstSwitch = getClosestSwitchFromIP(dst);
+		
+		// calculate the shortest paths
+		shortPaths = calculateShortestPaths(srcSwitch, dstSwitch);	
+		
+		// add the last hop to each path
 		for (int i = 0; i < shortPaths.size(); i++){
-			System.out.println("Path " + i);
-			for (int j = 0; j < shortPaths.get(i).size(); j++){
-				System.out.println("Src " + shortPaths.get(i).get(j).src + " Dst " + shortPaths.get(i).get(j).dst);
+			for (int j = 0; j < numSwitches; j++){
+				long lDst  = HexString.toLong(hostIP[j][1]);
+				if (dst.compareTo(hostIP[j][0]) == 0 && lDst == dstSwitch){
+					shortPaths.get(i).add(new SrcPortPair(dstSwitch, -1, Short.parseShort(hostIP[j][2])));
+				}
 			}
 		}
 	}
@@ -81,7 +91,7 @@ public class SdnGraph {
 				}
 				else if (srcSwitch == allNetworkLinks[i].getSrc()){
 					SrcPortPair toAdd = new SrcPortPair(srcSwitch, allNetworkLinks[i].getDst(), allNetworkLinks[i].getSrcPort());
-					if (firstPath == true){ //nothing exists in the first path
+					if (firstPath == true){ //nothing exists in the first path but could be more than one choice from first node
 						pulledList = new ArrayList<SrcPortPair>();
 					}
 					boolean bContinue = false;

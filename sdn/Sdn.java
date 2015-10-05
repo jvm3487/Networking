@@ -24,14 +24,21 @@ import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryListener;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryService;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscovery.LDUpdate;
 import net.floodlightcontroller.linkdiscovery.LinkInfo;
+import net.floodlightcontroller.packet.Ethernet;
+import net.floodlightcontroller.packet.IPv4;
 import net.floodlightcontroller.routing.Link;
 
+import org.openflow.protocol.OFFlowMod;
+import org.openflow.protocol.OFMatch;
 import org.openflow.protocol.OFMessage;
 import org.openflow.protocol.OFPacketIn;
 import org.openflow.protocol.OFPacketOut;
 import org.openflow.protocol.OFPort;
 import org.openflow.protocol.OFType;
+import org.openflow.protocol.Wildcards;
+import org.openflow.protocol.Wildcards.Flag;
 import org.openflow.protocol.action.OFAction;
+import org.openflow.protocol.action.OFActionNetworkLayerSource;
 import org.openflow.protocol.action.OFActionOutput;
 import org.openflow.util.U16;
 import org.slf4j.Logger;
@@ -61,7 +68,48 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscovery
     		graph.addLink(index, linkEntry.getKey());
     		index++;
     	}
-    	graph.print(1,5);
+    	
+    	String srcIP = "10.0.0.1";
+    	String dstIP = "10.0.0.5";
+    	graph.calculatePaths(srcIP, dstIP);
+    	ArrayList<ArrayList<SrcPortPair>> shortPaths = graph.shortPaths;
+    	
+    	//print solution temporarily
+    	for (int i = 0; i < shortPaths.size(); i++){
+    		System.out.println("Path " + i);
+    		for (int j = 0; j < shortPaths.get(i).size(); j++){
+    			System.out.println("Src " + shortPaths.get(i).get(j).src + " Dst " + shortPaths.get(i).get(j).dst + " DstPort " + shortPaths.get(i).get(j).port);
+    		}
+    	}
+    	
+    	// choose only one solution for now get(0)
+    	ArrayList<SrcPortPair> oneSolution = shortPaths.get(0);
+    	
+    	// assign rule to all the switches
+    	for (int i = 0; i < oneSolution.size(); i++){
+    		OFMatch match = new OFMatch();
+    		match.setWildcards(Wildcards.FULL.matchOn(Flag.DL_TYPE).matchOn(Flag.NW_DST).withNwDstMask(32));
+    		match.setDataLayerType(Ethernet.TYPE_IPv4);
+    		match.setNetworkSource(IPv4.toIPv4Address(dstIP));
+    		
+    		ArrayList<OFAction> actions = new ArrayList<OFAction>();
+    		OFActionOutput action = new OFActionOutput().setPort(oneSolution.get(i).port);
+    		actions.add(action);
+    		
+    		OFFlowMod flowMod = new OFFlowMod();
+    		flowMod.setHardTimeout((short)0);
+    		flowMod.setMatch(match);
+    		flowMod.setActions(actions);
+    		flowMod.setLength((short) (OFFlowMod.MINIMUM_LENGTH + OFActionOutput.MINIMUM_LENGTH /*+ OFActionNetworkLayerSource.MINIMUM_LENGTH*/));
+    		try{
+    			System.out.println("Switch adding rule to " + oneSolution.get(i).src);
+    			IOFSwitch currentSwitch = floodlightProvider.getSwitch(oneSolution.get(i).src);
+    			currentSwitch.write(flowMod, null);
+    		}
+    		catch(IOException e){
+    			log.error("Failed to write the flowMod" + e);
+    		}
+    	}
     }
     
     @Override public void switchAdded(long switchId){}
@@ -70,14 +118,6 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscovery
 
     @Override public void switchActivated(long switchId) {
     	System.out.println("===== I've been added3! ======" + switchId);
-    	Map<Link, LinkInfo> linkMap = linkDiscoverer.getLinks();
-    	graph.setNumLinks(linkMap.size());
-    	int index = 0;
-    	for (Map.Entry<Link, LinkInfo> linkEntry : linkMap.entrySet()){
-    		graph.addLink(index, linkEntry.getKey());
-    		index++;
-    	}
-    	graph.print(1,5);
     }
 
     @Override public void switchPortChanged(long switchId,
