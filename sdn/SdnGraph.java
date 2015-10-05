@@ -103,7 +103,7 @@ public class SdnGraph {
 					if (bContinue == true) 
 						continue;
 					// don't add if the path is longer than the longest possible path
-					if (pulledList.size() + 1 < numSwitches){
+					if (pulledList.size() + 1 < numSwitches && (ans.isEmpty() == true || pulledList.size() > ans.get(0).size())){
 						ArrayList<SrcPortPair> pulledListPlusOne = new ArrayList<SrcPortPair>(pulledList);
 						pulledListPlusOne.add(toAdd);
 						queue.add(pulledListPlusOne);

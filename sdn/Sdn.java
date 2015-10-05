@@ -83,14 +83,16 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscovery
     	}
     	
     	// choose only one solution for now get(0)
-    	ArrayList<SrcPortPair> oneSolution = shortPaths.get(0);
+    	ArrayList<SrcPortPair> oneSolution = new ArrayList<SrcPortPair>();
+    	if (shortPaths.isEmpty() == false)
+    		oneSolution = shortPaths.get(0);
     	
     	// assign rule to all the switches
     	for (int i = 0; i < oneSolution.size(); i++){
     		OFMatch match = new OFMatch();
     		match.setWildcards(Wildcards.FULL.matchOn(Flag.DL_TYPE).matchOn(Flag.NW_DST).withNwDstMask(32));
     		match.setDataLayerType(Ethernet.TYPE_IPv4);
-    		match.setNetworkSource(IPv4.toIPv4Address(dstIP));
+    		match.setNetworkDestination(IPv4.toIPv4Address(dstIP));
     		
     		ArrayList<OFAction> actions = new ArrayList<OFAction>();
     		OFActionOutput action = new OFActionOutput().setPort(oneSolution.get(i).port);
@@ -98,6 +100,7 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscovery
     		
     		OFFlowMod flowMod = new OFFlowMod();
     		flowMod.setHardTimeout((short)0);
+    		flowMod.setCommand(OFFlowMod.OFPFC_ADD);
     		flowMod.setMatch(match);
     		flowMod.setActions(actions);
     		flowMod.setLength((short) (OFFlowMod.MINIMUM_LENGTH + OFActionOutput.MINIMUM_LENGTH /*+ OFActionNetworkLayerSource.MINIMUM_LENGTH*/));
@@ -105,6 +108,7 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscovery
     			System.out.println("Switch adding rule to " + oneSolution.get(i).src);
     			IOFSwitch currentSwitch = floodlightProvider.getSwitch(oneSolution.get(i).src);
     			currentSwitch.write(flowMod, null);
+    			currentSwitch.flush();
     		}
     		catch(IOException e){
     			log.error("Failed to write the flowMod" + e);
