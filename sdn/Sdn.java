@@ -6,6 +6,7 @@ import java.io.FileReader;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -62,6 +63,12 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscovery
     @Override public void linkDiscoveryUpdate(List<LDUpdate> updateList) {
     	System.out.println("=====Here now!2=====");
     	Map<Link, LinkInfo> linkMap = linkDiscoverer.getLinks();
+    	
+    	// no known links
+    	if (linkMap == null)
+    		return;
+    	
+    	// add all links to graph
     	graph.setNumLinks(linkMap.size());
     	int index = 0;
     	for (Map.Entry<Link, LinkInfo> linkEntry : linkMap.entrySet()){
@@ -69,49 +76,83 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscovery
     		index++;
     	}
     	
-    	String srcIP = "10.0.0.1";
-    	String dstIP = "10.0.0.5";
-    	graph.calculatePaths(srcIP, dstIP);
-    	ArrayList<ArrayList<SrcPortPair>> shortPaths = graph.shortPaths;
+    	// clear all the old rules
+    	HashSet<Long> hashSwitches = graph.countSwitches();
+    	if (hashSwitches.isEmpty() == true)
+    		return;
     	
-    	//print solution temporarily
-    	for (int i = 0; i < shortPaths.size(); i++){
-    		System.out.println("Path " + i);
-    		for (int j = 0; j < shortPaths.get(i).size(); j++){
-    			System.out.println("Src " + shortPaths.get(i).get(j).src + " Dst " + shortPaths.get(i).get(j).dst + " DstPort " + shortPaths.get(i).get(j).port);
-    		}
+    	for (Long lSwitch : hashSwitches){
+    		IOFSwitch currentSwitch = floodlightProvider.getSwitch(lSwitch);
+    		currentSwitch.clearAllFlowMods();
     	}
     	
-    	// choose only one solution for now get(0)
-    	ArrayList<SrcPortPair> oneSolution = new ArrayList<SrcPortPair>();
-    	if (shortPaths.isEmpty() == false)
-    		oneSolution = shortPaths.get(0);
+    	// calculate the shortest path for each IP address
+    	for (int ipOne = 0; ipOne < graph.getNumSwitches(); ipOne++){
+    		for (int ipTwo = 0; ipTwo < graph.getNumSwitches(); ipTwo++){
+    			if (ipOne == ipTwo)
+    				continue;
+    				
+    			String srcIP = graph.getHostIP(ipOne);
+    			String dstIP = graph.getHostIP(ipTwo);
+    			System.out.println("srcIP " + srcIP + " dstIP " + dstIP);
+    			
+    			// calculate forward and backward 
+    			for (int pathDirection = 0; pathDirection < 2; pathDirection++){ 
+    				if (pathDirection == 0){
+    					String temp = new String(dstIP);
+    					dstIP = srcIP;
+    					srcIP = temp;
+    				}
+    					
+   					graph.calculatePaths(srcIP, dstIP);
+    				
+    				ArrayList<ArrayList<SrcPortPair>> shortPaths = graph.getShortPaths();
     	
-    	// assign rule to all the switches
-    	for (int i = 0; i < oneSolution.size(); i++){
-    		OFMatch match = new OFMatch();
-    		match.setWildcards(Wildcards.FULL.matchOn(Flag.DL_TYPE).matchOn(Flag.NW_DST).withNwDstMask(32));
-    		match.setDataLayerType(Ethernet.TYPE_IPv4);
-    		match.setNetworkDestination(IPv4.toIPv4Address(dstIP));
+    				// no solution for these nodes
+    				if (shortPaths.isEmpty() == true)
+    					continue;
+    	
+    				//print solution temporarily
+    				for (int i = 0; i < shortPaths.size(); i++){
+    					System.out.println("Path " + i);
+    					for (int j = 0; j < shortPaths.get(i).size(); j++){
+    						System.out.println("Src " + shortPaths.get(i).get(j).src + " Dst " + shortPaths.get(i).get(j).dst + " DstPort " + shortPaths.get(i).get(j).port);
+    					}
+    				}
+    	        	
+    				// choose only one solution for now get(0)
+    				ArrayList<SrcPortPair> oneSolution = new ArrayList<SrcPortPair>();
+    				oneSolution = shortPaths.get(0);
+    	
+    				// assign rule to all the switches
+    				for (int i = 0; i < oneSolution.size(); i++){
+    					OFMatch match = new OFMatch();
+    					match.setWildcards(Wildcards.FULL.matchOn(Flag.DL_TYPE).matchOn(Flag.NW_DST).withNwDstMask(32));
+    					match.setDataLayerType(Ethernet.TYPE_IPv4);
+    					match.setNetworkDestination(IPv4.toIPv4Address(dstIP));
     		
-    		ArrayList<OFAction> actions = new ArrayList<OFAction>();
-    		OFActionOutput action = new OFActionOutput().setPort(oneSolution.get(i).port);
-    		actions.add(action);
+    					ArrayList<OFAction> actions = new ArrayList<OFAction>();
+    					OFActionOutput action = new OFActionOutput().setPort(oneSolution.get(i).port);
+    					actions.add(action);
     		
-    		OFFlowMod flowMod = new OFFlowMod();
-    		flowMod.setHardTimeout((short)0);
-    		flowMod.setCommand(OFFlowMod.OFPFC_ADD);
-    		flowMod.setMatch(match);
-    		flowMod.setActions(actions);
-    		flowMod.setLength((short) (OFFlowMod.MINIMUM_LENGTH + OFActionOutput.MINIMUM_LENGTH /*+ OFActionNetworkLayerSource.MINIMUM_LENGTH*/));
-    		try{
-    			System.out.println("Switch adding rule to " + oneSolution.get(i).src);
-    			IOFSwitch currentSwitch = floodlightProvider.getSwitch(oneSolution.get(i).src);
-    			currentSwitch.write(flowMod, null);
-    			currentSwitch.flush();
-    		}
-    		catch(IOException e){
-    			log.error("Failed to write the flowMod" + e);
+    					OFFlowMod flowMod = new OFFlowMod();
+    					flowMod.setHardTimeout((short)0);
+    					flowMod.setBufferId(OFPacketOut.BUFFER_ID_NONE);
+    					flowMod.setCommand(OFFlowMod.OFPFC_ADD);
+    					flowMod.setMatch(match);
+    					flowMod.setActions(actions);
+    					flowMod.setLength((short) (OFFlowMod.MINIMUM_LENGTH + OFActionOutput.MINIMUM_LENGTH));
+    					try{
+    						System.out.println("Switch adding rule to " + oneSolution.get(i).src);
+    						IOFSwitch currentSwitch = floodlightProvider.getSwitch(oneSolution.get(i).src);
+    						currentSwitch.write(flowMod, null);
+    						currentSwitch.flush();
+    					}
+    					catch(IOException e){
+    						log.error("Failed to write the flowMod" + e);
+    					}
+    				}
+    			}
     		}
     	}
     }
@@ -131,15 +172,14 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscovery
     }
     @Override public void switchChanged(long switchId) {}
     
-    /*@Override
-    public String getName() {
+    /*@Override public String getName() {
         return Sdn.class.getPackage().getName();
     }
 
-    public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
+    @Override public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
         
     	System.out.println("I am here " + sw.toString());
-    	
+    	return Command.CONTINUE;
     	OFPacketIn pi = (OFPacketIn) msg;
         OFPacketOut po = (OFPacketOut) floodlightProvider.getOFMessageFactory()
                 .getMessage(OFType.PACKET_OUT);
@@ -171,33 +211,28 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscovery
         return Command.CONTINUE;
     }
 
-    @Override
-    public boolean isCallbackOrderingPrereq(OFType type, String name) {
+    @Override public boolean isCallbackOrderingPrereq(OFType type, String name) {
         return false;
     }
 
-    @Override
-    public boolean isCallbackOrderingPostreq(OFType type, String name) {
+    @Override public boolean isCallbackOrderingPostreq(OFType type, String name) {
         return false;
     }*/
 
     // IFloodlightModule
     
-    @Override
-    public Collection<Class<? extends IFloodlightService>> getModuleServices() {
+    @Override public Collection<Class<? extends IFloodlightService>> getModuleServices() {
         // We don't provide any services, return null
         return null;
     }
 
-    @Override
-    public Map<Class<? extends IFloodlightService>, IFloodlightService>
+    @Override public Map<Class<? extends IFloodlightService>, IFloodlightService>
             getServiceImpls() {
         // We don't provide any services, return null
         return null;
     }
 
-    @Override
-    public Collection<Class<? extends IFloodlightService>>
+    @Override public Collection<Class<? extends IFloodlightService>>
             getModuleDependencies() {
         Collection<Class<? extends IFloodlightService>> l = 
                 new ArrayList<Class<? extends IFloodlightService>>();

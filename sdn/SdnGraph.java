@@ -3,6 +3,7 @@ package net.floodlightcontroller.sdn;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
@@ -14,7 +15,20 @@ public class SdnGraph {
 	private int numSwitches;
 	private String[][] hostIP; //contains the host IP with the switches and port number
 	private Link[] allNetworkLinks; // array of all links in the network
-	public ArrayList<ArrayList<SrcPortPair>> shortPaths;
+	private ArrayList<ArrayList<SrcPortPair>> shortPaths;
+	
+	public int getNumSwitches() { return numSwitches; }	
+	public ArrayList<ArrayList<SrcPortPair>> getShortPaths(){ return shortPaths; }
+	public String getHostIP(int index) { return hostIP[index][0]; }
+	
+	public HashSet<Long> countSwitches(){
+		HashSet<Long> ans = new HashSet<Long>();
+		for (int i = 0; i < allNetworkLinks.length; i++){
+			ans.add(allNetworkLinks[i].getSrc());
+			ans.add(allNetworkLinks[i].getDst());
+		}
+		return ans;
+	}
 	
 	public SdnGraph(int numS){
 		numSwitches = numS;
@@ -51,6 +65,8 @@ public class SdnGraph {
 		
 		// calculate the shortest paths
 		shortPaths = calculateShortestPaths(srcSwitch, dstSwitch);	
+		if (shortPaths.isEmpty() == true)
+			return;
 		
 		// add the last hop to each path
 		for (int i = 0; i < shortPaths.size(); i++){
