@@ -6,6 +6,7 @@ import java.io.FileReader;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +46,7 @@ import org.openflow.util.U16;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscoveryListener {
+public class Sdn implements IFloodlightModule, ILinkDiscoveryListener {
     protected static Logger log = LoggerFactory.getLogger(Sdn.class);
 
     protected IFloodlightProviderService floodlightProvider;
@@ -56,9 +57,79 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscovery
         this.floodlightProvider = floodlightProvider;
     }
     
-    @Override public void linkDiscoveryUpdate(LDUpdate update) {
-    	System.out.println("=====Here now!=====");
+    private void assignSwitchRules(ArrayList<SrcPortPair> oneSolution, String dstIP){
+    	// assign rule to all the switches
+		for (int i = 0; i < oneSolution.size(); i++){
+			OFMatch match = new OFMatch();
+			match.setWildcards(Wildcards.FULL.matchOn(Flag.DL_TYPE).matchOn(Flag.NW_DST).withNwDstMask(32));
+			match.setDataLayerType(Ethernet.TYPE_IPv4);
+			match.setNetworkDestination(IPv4.toIPv4Address(dstIP));
+
+			ArrayList<OFAction> actions = new ArrayList<OFAction>();
+			OFActionOutput action = new OFActionOutput().setPort(oneSolution.get(i).port);
+			actions.add(action);
+
+			OFFlowMod flowMod = new OFFlowMod();
+			flowMod.setHardTimeout((short)0);
+			flowMod.setBufferId(OFPacketOut.BUFFER_ID_NONE);
+			flowMod.setCommand(OFFlowMod.OFPFC_ADD);
+			flowMod.setMatch(match);
+			flowMod.setActions(actions);
+			flowMod.setLength((short) (OFFlowMod.MINIMUM_LENGTH + OFActionOutput.MINIMUM_LENGTH));
+			try{
+				System.out.println("Switch adding rule to " + oneSolution.get(i).src);
+				IOFSwitch currentSwitch = floodlightProvider.getSwitch(oneSolution.get(i).src);
+				currentSwitch.write(flowMod, null);
+				currentSwitch.flush();
+			}
+			catch(IOException e){
+				log.error("Failed to write the flowMod" + e);
+			}
+		}
     }
+    
+    private ArrayList<ArrayList<SrcPortPair>> loadBalance(ArrayList<ArrayList<SrcPortPair>> shortPaths, HashMap<Long, ArrayList<String>> switchUtil, String dstIP){
+    	ArrayList<ArrayList<SrcPortPair>> bestSolns;
+		int numberOfNodes = shortPaths.get(0).size();
+		
+		for (int i = 0; i < numberOfNodes; i++){ //all paths are the same length
+				int minimumUtilization = Integer.MAX_VALUE;
+				bestSolns = new ArrayList<ArrayList<SrcPortPair>>();
+				for (int j = 0; j < shortPaths.size(); j++){
+					if (switchUtil.get(shortPaths.get(j).get(i).src) == null){
+						if (minimumUtilization > 0){
+							// toss old solutions
+							minimumUtilization = 0;
+							bestSolns = new ArrayList<ArrayList<SrcPortPair>>();
+						}
+						if (minimumUtilization == 0){
+							bestSolns.add(shortPaths.get(j));
+						}
+					}
+					else if (switchUtil.get(shortPaths.get(j).get(i).src).contains(dstIP) == true){
+					if (minimumUtilization != -1){
+						// toss old solutions
+						bestSolns = new ArrayList<ArrayList<SrcPortPair>>();
+					}
+					minimumUtilization = -1;
+					bestSolns.add(shortPaths.get(j));
+				}
+				else if (switchUtil.get(shortPaths.get(j).get(i).src).size() < minimumUtilization){
+					// toss old solutions
+					bestSolns = new ArrayList<ArrayList<SrcPortPair>>();
+					minimumUtilization = switchUtil.get(shortPaths.get(j).get(i).src).size();
+					bestSolns.add(shortPaths.get(j));
+				}
+				else if (switchUtil.get(shortPaths.get(j).get(i).src).size() == minimumUtilization){
+					bestSolns.add(shortPaths.get(j));
+				}
+			}     					
+			shortPaths = bestSolns;
+		}
+		return shortPaths;
+    }
+    
+    @Override public void linkDiscoveryUpdate(LDUpdate update) {}
 
     @Override public void linkDiscoveryUpdate(List<LDUpdate> updateList) {
     	System.out.println("=====Here now!2=====");
@@ -76,32 +147,34 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscovery
     		index++;
     	}
     	
-    	// clear all the old rules
+    	// clear all the old rules and map switch utilization to 0
     	HashSet<Long> hashSwitches = graph.countSwitches();
     	if (hashSwitches.isEmpty() == true)
     		return;
     	
+    	// map each switch to the IP address rule on it for load balancing calculations
+    	HashMap<Long, ArrayList<String>> switchUtil = new HashMap<Long, ArrayList<String>>();
     	for (Long lSwitch : hashSwitches){
     		IOFSwitch currentSwitch = floodlightProvider.getSwitch(lSwitch);
     		currentSwitch.clearAllFlowMods();
+    		switchUtil.put(lSwitch, null);
     	}
-    	
+    	    	
     	// calculate the shortest path for each IP address
     	for (int ipOne = 0; ipOne < graph.getNumSwitches(); ipOne++){
-    		for (int ipTwo = 0; ipTwo < graph.getNumSwitches(); ipTwo++){
-    			if (ipOne == ipTwo)
-    				continue;
-    				
+    		for (int ipTwo = ipOne + 1; ipTwo < graph.getNumSwitches(); ipTwo++){
+    			   				
     			String srcIP = graph.getHostIP(ipOne);
     			String dstIP = graph.getHostIP(ipTwo);
     			System.out.println("srcIP " + srcIP + " dstIP " + dstIP);
     			
     			// calculate forward and backward 
     			for (int pathDirection = 0; pathDirection < 2; pathDirection++){ 
-    				if (pathDirection == 0){
+    				if (pathDirection == 1){ // and the reverse
     					String temp = new String(dstIP);
     					dstIP = srcIP;
     					srcIP = temp;
+    					System.out.println("srcIP " + srcIP + " dstIP " + dstIP);
     				}
     					
    					graph.calculatePaths(srcIP, dstIP);
@@ -119,106 +192,32 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscovery
     						System.out.println("Src " + shortPaths.get(i).get(j).src + " Dst " + shortPaths.get(i).get(j).dst + " DstPort " + shortPaths.get(i).get(j).port);
     					}
     				}
-    	        	
-    				// choose only one solution for now get(0)
-    				ArrayList<SrcPortPair> oneSolution = new ArrayList<SrcPortPair>();
-    				oneSolution = shortPaths.get(0);
-    	
-    				// assign rule to all the switches
-    				for (int i = 0; i < oneSolution.size(); i++){
-    					OFMatch match = new OFMatch();
-    					match.setWildcards(Wildcards.FULL.matchOn(Flag.DL_TYPE).matchOn(Flag.NW_DST).withNwDstMask(32));
-    					match.setDataLayerType(Ethernet.TYPE_IPv4);
-    					match.setNetworkDestination(IPv4.toIPv4Address(dstIP));
-    		
-    					ArrayList<OFAction> actions = new ArrayList<OFAction>();
-    					OFActionOutput action = new OFActionOutput().setPort(oneSolution.get(i).port);
-    					actions.add(action);
-    		
-    					OFFlowMod flowMod = new OFFlowMod();
-    					flowMod.setHardTimeout((short)0);
-    					flowMod.setBufferId(OFPacketOut.BUFFER_ID_NONE);
-    					flowMod.setCommand(OFFlowMod.OFPFC_ADD);
-    					flowMod.setMatch(match);
-    					flowMod.setActions(actions);
-    					flowMod.setLength((short) (OFFlowMod.MINIMUM_LENGTH + OFActionOutput.MINIMUM_LENGTH));
-    					try{
-    						System.out.println("Switch adding rule to " + oneSolution.get(i).src);
-    						IOFSwitch currentSwitch = floodlightProvider.getSwitch(oneSolution.get(i).src);
-    						currentSwitch.write(flowMod, null);
-    						currentSwitch.flush();
+    	        	    				
+    				// check to see if path exists already and use the same path if it does
+    				// if not choose the least occupied path
+    				shortPaths = loadBalance(shortPaths, switchUtil, dstIP);
+    				    				
+    				// if more than two correct then just choose the first one
+    				ArrayList<SrcPortPair> oneSolution = new ArrayList<SrcPortPair>(shortPaths.get(0));
+    				
+    				// update map with new usage
+    				for (SrcPortPair eachNode : oneSolution){
+    					ArrayList<String> currentValue = switchUtil.get(eachNode.src);
+    					if (currentValue == null){
+    						currentValue = new ArrayList<String>();
     					}
-    					catch(IOException e){
-    						log.error("Failed to write the flowMod" + e);
-    					}
+    					if (currentValue.contains(dstIP) == false)
+    						currentValue.add(dstIP);
+    					switchUtil.put(eachNode.src, currentValue);
     				}
+    				
+    				// assign rule to all the switches
+    				assignSwitchRules(oneSolution, dstIP);    				
     			}
     		}
     	}
     }
     
-    @Override public void switchAdded(long switchId){}
-
-    @Override public void switchRemoved(long switchId) {}
-
-    @Override public void switchActivated(long switchId) {
-    	System.out.println("===== I've been added3! ======" + switchId);
-    }
-
-    @Override public void switchPortChanged(long switchId,
-                                  ImmutablePort port,
-                                  IOFSwitch.PortChangeType type) {
-    	System.out.println("===== I've been added4! ======" + switchId);
-    }
-    @Override public void switchChanged(long switchId) {}
-    
-    /*@Override public String getName() {
-        return Sdn.class.getPackage().getName();
-    }
-
-    @Override public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
-        
-    	System.out.println("I am here " + sw.toString());
-    	return Command.CONTINUE;
-    	OFPacketIn pi = (OFPacketIn) msg;
-        OFPacketOut po = (OFPacketOut) floodlightProvider.getOFMessageFactory()
-                .getMessage(OFType.PACKET_OUT);
-        po.setBufferId(pi.getBufferId())
-            .setInPort(pi.getInPort());
-
-        // set actions
-        OFActionOutput action = new OFActionOutput()
-            .setPort(OFPort.OFPP_FLOOD.getValue());
-        po.setActions(Collections.singletonList((OFAction)action));
-        po.setActionsLength((short) OFActionOutput.MINIMUM_LENGTH);
-
-        // set data if is is included in the packetin
-        if (pi.getBufferId() == OFPacketOut.BUFFER_ID_NONE) {
-            byte[] packetData = pi.getPacketData();
-            po.setLength(U16.t(OFPacketOut.MINIMUM_LENGTH
-                    + po.getActionsLength() + packetData.length));
-            po.setPacketData(packetData);
-        } else {
-            po.setLength(U16.t(OFPacketOut.MINIMUM_LENGTH
-                    + po.getActionsLength()));
-        }
-        try {
-            sw.write(po, cntx);
-        } catch (IOException e) {
-            log.error("Failure writing PacketOut", e);
-        }
-
-        return Command.CONTINUE;
-    }
-
-    @Override public boolean isCallbackOrderingPrereq(OFType type, String name) {
-        return false;
-    }
-
-    @Override public boolean isCallbackOrderingPostreq(OFType type, String name) {
-        return false;
-    }*/
-
     // IFloodlightModule
     
     @Override public Collection<Class<? extends IFloodlightService>> getModuleServices() {
@@ -267,7 +266,6 @@ public class Sdn implements IFloodlightModule, IOFSwitchListener, ILinkDiscovery
 
     @Override
     public void startUp(FloodlightModuleContext context) {
-        floodlightProvider.addOFSwitchListener(this);
         linkDiscoverer.addListener(this);
     }
 }
