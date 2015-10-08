@@ -1,0 +1,17 @@
+John McCrone - Homework 3
+
+I react to failures by implementing ILinkDiscoveryListener and linkDiscoveryUpdate(List<LDUpdate> updateList) method and recalculating all the flows with the downed link ignored.  This is done by using a breadth first search graph algorithm implmented in SdnGraph.java.  In all cases, I balance the flows between all possible shortest paths to produce a solution that does not increase the number of flows on any one node more than possible.  When the link comes up, the method is called again this time without the link being ignored.  I have tested it with the given topology and it seems to react correctly.
+
+I minimize the number of rules based on matching the destination IP of the flows along with the destination port, and if they match on a switch in all cases where a rule was added, then I reduce the rules appropriately by deleting the old rules and adding a more general rule.  Doing this still maintains proper load balancing.
+
+The variables that need to be modified are located in floodlightdefault.properties.  They are called net.floodlightcontroller.sdn.Sdn.numSwitches and net.floodlightcontroller.sdn.Sdn.topologyFile.  The example inputs are:
+net.floodlightcontroller.sdn.Sdn.numSwitches=5
+net.floodlightcontroller.sdn.Sdn.topologyFile=/tmp/log/topology.txt
+
+I did not use an external graph library.  
+
+Description of my added files:
+Sdn.java - main file which implements the functionality of my controller
+SdnGraph.java - a graph algorithm for calculating the shortest path between any two IP addresses
+SrcPortPair.java - a class that is used only to hold data mainly for the graph algorithm
+IPportPair.java - a class that is used to hold data mainly for the rule reducing portion
